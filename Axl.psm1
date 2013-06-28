@@ -67,11 +67,16 @@ function Execute-SOAPRequest {
 }
 
 
-#  .synopsis
-#  Executes an update SQL statement against the Cisco UC database and returns the number of rows updated
-#  
-#  .example
-#  Get-UcSqlUpdate $conn "update device set name = 'yes'"
+<#
+  .synopsis
+  Executes an update SQL statement against the Cisco UC database and returns the number of rows updated
+
+  .outputs
+  System.String.  The number of rows updated
+
+  .example
+  Get-UcSqlUpdate $conn "update device set name = 'yes'"
+#>
 function Get-UcSqlUpdate {
   Param (
     # Connection object created with New-AxlConnection
@@ -96,7 +101,7 @@ function Get-UcSqlUpdate {
   $retXml = Execute-SOAPRequest $AxlConn $xml
 
   $node = $retXml.selectSingleNode("//return/rowsUpdated")
-  return [int]$node.innertext
+  [int]$node.innertext
   remove-variable retXml
 }
 
@@ -171,15 +176,102 @@ function Search-UcLicenseCapabilities {
 }
 
 function New-AxlConnection {
+<#
+  .synopsis
+  Specify AXL server connection parameters
+  
+  .description
+  Use this command to specify the information necessary to connect to an AXL server such as Cisco Unified 
+  Communications Manager (CUCM), or Cisco Unified Presense Server (CUPS).  Assign the output of this 
+  command to a variable so it can be used with other commands in this module that require it.
+  
+  The SSL certificate on the AXL server must be trusted by the computer runing your powershell script.
+  If the certificate is self-signed, then you will need to add it to your trusted certificate store.
+  If the certificate is signed by a CA, then you will need to make sure the CA certificate is added to
+  your trusted certificate store.  This also means that the name you use to connect to the server (i.e.
+  the 'server' parameter of this command) must match the subject name on the AXL server certificate or 
+  must match one of the subject alternative names (SAN) if the certificate has SANs.
+  
+  .parameter Server
+  Supply only the hostname (fqdn or IP) of the AXL server.  The actual URL used to connect to the server 
+  is generated automatically based on this template: "https://${Server}:8443/axl/".  
+  
+  .parameter User
+  The username required to authenticate to the AXL server
+  
+  .parameter Pass
+  The password required to authenticate to the AXL server
+  
+  .example
+  $cucm = New-AxlConnection cm1.example.com admin mypass
+  
+#>
   Param(
-    [Parameter(Mandatory=$true)][string]$server,
-    [Parameter(Mandatory=$true)][string]$user,
-    [Parameter(Mandatory=$true)][string]$pass
+    [Parameter(Mandatory=$true)][string]$Server,
+    [Parameter(Mandatory=$true)][string]$User,
+    [Parameter(Mandatory=$true)][string]$Pass
   )
   $creds = toBase64 "$user`:$pass"
   $url = "https://${server}:8443/axl/"
   $conn = new-object psobject -property @{url=$url; user=$user; pass=$pass; creds=$creds; server=$server}
   return $conn
+}
+
+function Remove-Buddy {
+<#
+  .synopsis
+  Deletes a conatct (aka buddy) from someone's contact list.
+  
+  .description
+  There is no AXL method to remove contact list entries, so this function uses SQL to manipulate the database
+  directly.  Use at your own risk.
+  
+  .parameter AxlConn
+  Connection object created with New-AxlConnection.
+
+  .parameter UserID
+  userid
+  
+  .parameter BuddyAddr
+  SIP address of the contact to delete
+  
+  .parameter GroupName
+  Contact list group, as seen in the Jabber client, that contains the contact to be deleted.  Note, group names
+  in CUP are case-sensitive.
+  
+  .example
+  Remove-Buddy asmithee jane.doe@example.com "My Contacts"
+  
+  .example
+  Get-BuddyList $conn asmith | ? {$_.contact_jid -match "jdoe"} | remove-buddy $conn
+  
+  Descripton
+  ===================
+  Remove entries from Amy Smith's (userid=asmith) contact list where the contact's address 
+  matches regular expression "jdoe"
+#>
+  Param(
+    [Parameter(Mandatory=$true)][psobject]
+    $AxlConn,
+    
+    [Parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+    [string]
+    $UserID,
+    
+    [Parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+    [alias("contact_jid")][string]
+    $BuddyAddr,
+    
+    [Parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+    [alias("group_name")][string]
+    $GroupName
+  )
+  $sql = @"
+INSERT INTO RosterSyncQueue 
+(userid, buddyjid, buddynickname, groupname, action) 
+VALUES ('${UserID}', '${BuddyAddr}', '', '${GroupName}', 3)
+"@
+  $null = Get-UcSqlUpdate $AxlConn $sql
 }
 
 function Get-BuddyList {
@@ -192,13 +284,12 @@ function Get-BuddyList {
   Presense userid who's contact list will be returned.  SQL wildcard character '%' is allowed.
   
   .parameter axlconn
-  Axl connection to a CUP server.  New-AxlConnection may be used to create the connection.
+  Connection object created with New-AxlConnection.
   
   .example
   Get-BuddyList -AxlConn $conn -user "John Doe"
 #>
   Param(
-    # Connection object created with New-AxlConnection
     [Parameter(Mandatory=$true)][psobject]$AxlConn,
     
     [Parameter(Mandatory=$true)][string]$user
@@ -214,4 +305,4 @@ order by g.group_name,r.contact_jid
   Get-UcSqlQuery $AxlConn $sql
 }
 
-Export-ModuleMember -Function Search-UcLicenseCapabilities, New-AxlConnection, Get-UcSqlQuery, Get-UcSqlUpdate, Get-BuddyList
+Export-ModuleMember -Function Search-UcLicenseCapabilities, New-AxlConnection, Get-UcSqlQuery, Get-UcSqlUpdate, Get-BuddyList, Remove-Buddy
