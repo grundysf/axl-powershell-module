@@ -1,5 +1,5 @@
 #
-# Craig Petty
+# Craig Petty, yttep.giarc@gmail.com
 # Digital Generation, Inc.
 # 2013
 #
@@ -16,7 +16,7 @@ public struct contact {
 
 function toBase64 {
   Param (
-    [parameter(Mandatory=$true)][string] $msg
+    [Parameter(Mandatory=$true)][string] $msg
   )
   return [system.convert]::tobase64string([system.text.encoding]::UTF8.getbytes($msg))
 }
@@ -24,14 +24,21 @@ function toBase64 {
 function Execute-SOAPRequest { 
   Param (
     [Parameter(Mandatory=$true)][psobject]$AxlConn,
-    [Xml] $XmlDoc
+    [Parameter(Mandatory=$true)][Xml]$XmlDoc,
+    # Write XML request/response to a file for troubleshooting
+    [string]$XmlTraceFile
   )
   $ErrorActionPreference = "Stop";
+
+  if ($XmlTraceFile) {
+    "`n",$XmlDoc.innerxml | out-file -encoding ascii -append $XmlTraceFile
+  }
   
   #write-host "Sending SOAP Request To Server: $URL" 
   $webReq = [System.Net.WebRequest]::Create($AxlConn.url)
   $webReq.Headers.Add("SOAPAction","SOAPAction: CUCM:DB ver=8.5")
-  $webReq.Headers.Add("Authorization","Basic "+$AxlConn.creds)
+  $creds = ConvertFrom-SecureString $AxlConn.creds
+  $webReq.Headers.Add("Authorization","Basic "+$creds)
 
   #$cred = get-credential
   #$webReq.Credentials = new-object system.net.networkcredential @($cred.username, $cred.password)
@@ -52,6 +59,10 @@ function Execute-SOAPRequest {
   $soapReader = [System.IO.StreamReader]($responseStream)
   $ReturnXml = [Xml] $soapReader.ReadToEnd()
   $responseStream.Close()
+
+  if ($XmlTraceFile) {
+    "`n",$ReturnXml.innerxml | out-file -encoding ascii -append $XmlTraceFile
+  }
 
   # check to see if a fault occurred
   $nsm = new-object system.xml.XmlNameSpaceManager -ArgumentList $xml.NameTable
@@ -139,7 +150,8 @@ function Get-UcSqlQuery {
   return $resultArray
 }
 
-# returns an array of psobjects with (userid, enableUps, and enableUpc properties set)
+# .outputs
+#  PsObjects with (userid, enableUps, and enableUpc properties set)
 function Search-UcLicenseCapabilities {
   Param (
     [Parameter(Mandatory=$true)][psobject]$AxlConn,
@@ -161,18 +173,71 @@ function Search-UcLicenseCapabilities {
   </soapenv:Body>
 </soapenv:Envelope>
 "@
-  $textNode = $xml.CreateTextNode($sqlText)
+  $textNode = $xml.CreateTextNode($searchCriteria)
   $null = $xml.SelectSingleNode("//searchCriteria/userid").prependchild($textNode)
   $retXml = Execute-SOAPRequest $AxlConn $xml
 
   #$retXml.selectNodes("//userid[../enableUpc = 'true']") 
   $retXml.selectNodes("//licenseCapabilities") | % -begin {$resultArray=@()} {
     $node = new-object psobject
-    $node | add-member noteproperty userid $_.selectsinglenode("userid").innerxml
-    $node | add-member noteproperty enableUpc $_.selectsinglenode("enableUpc").innerxml
+    $node | add-member noteproperty userid $_.selectsinglenode("userid").innertext
+    $node | add-member noteproperty enableUpc $_.selectsinglenode("enableUpc").innertext
     $resultArray += $node
   }
   return $resultArray
+}
+
+# .synopsis
+#  psobject[] returns an array of psobjects with (userid, enableUps, and enableUpc properties set)
+function Search-Users {
+  Param (
+    [Parameter(Mandatory=$true)][psobject]$AxlConn,
+    [string]$searchCriteria="%",
+    
+    # Write XML request/response to a file for troubleshooting
+    [string]$XmlTraceFile
+  )
+  $xml = [xml]@"
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+ <soapenv:Header/>
+ <soapenv:Body>
+  <ns:listUser sequence="1">
+   <searchCriteria>
+    <userid/>
+   </searchCriteria>
+   <returnedTags>
+    <userid/><firstName/><lastName/>
+    <primaryExtension>
+     <pattern/><routePartitionName/>
+    </primaryExtension>
+    <status/>
+   </returnedTags>
+  </ns:listUser>
+ </soapenv:Body>
+</soapenv:Envelope>
+"@
+  $textNode = $xml.CreateTextNode($searchCriteria)
+  $null = $xml.SelectSingleNode("//searchCriteria/userid").prependchild($textNode)
+  $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $XmlTraceFile
+
+  $nsm = new-object system.xml.XmlNameSpaceManager -ArgumentList $retXml.NameTable
+  $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
+  $retXml.selectNodes("//ns:listUserResponse/return/user", $nsm) | % {
+    $node = new-object psobject
+    $node | add-member noteproperty userid $_.selectsinglenode("userid").innertext
+    $node | add-member noteproperty firstName $_.selectsinglenode("firstName").innertext
+    $node | add-member noteproperty lastName $_.selectsinglenode("lastName").innertext
+    # primaryExtension
+      $ext = new-object psobject
+      $ext | add-member noteproperty pattern $_.selectsinglenode("primaryExtension/pattern").innertext
+      $ext | add-member noteproperty routePartitionName $_.selectsinglenode("primaryExtension/routePartitionName").innertext
+      $ext | add-member scriptmethod ToString {$this.pattern} -force
+      $ext.PSObject.TypeNames.Insert(0,'UcDN')
+      $node | add-member noteproperty primaryExtension $ext
+    $node.PSObject.TypeNames.Insert(0,'UcUser')
+    $node
+  }
 }
 
 function New-AxlConnection {
@@ -200,7 +265,9 @@ function New-AxlConnection {
   The username required to authenticate to the AXL server
   
   .parameter Pass
-  The password required to authenticate to the AXL server
+  The password (in SecureString format) required to authenticate to the AXL server.  
+  Use (Read-Host -AsSecureString -Prompt Password) to create a SecureString.  If you do not supply
+  this parameter, then you will be prompted for the password.
   
   .example
   $cucm = New-AxlConnection cm1.example.com admin mypass
@@ -209,11 +276,22 @@ function New-AxlConnection {
   Param(
     [Parameter(Mandatory=$true)][string]$Server,
     [Parameter(Mandatory=$true)][string]$User,
-    [Parameter(Mandatory=$true)][string]$Pass
+    [System.Security.SecureString]$Pass
   )
-  $creds = toBase64 "$user`:$pass"
+  if (!$Pass) {$Pass = Read-Host -AsSecureString -Prompt "Password for ${User}@${Server}"}
+
+  $clearpass = ConvertFrom-SecureString $pass
+  $clearcreds = toBase64 "$user`:$clearpass"
+  $creds = ConvertTo-SecureString $clearcreds
+
   $url = "https://${server}:8443/axl/"
-  $conn = new-object psobject -property @{url=$url; user=$user; pass=$pass; creds=$creds; server=$server}
+  $conn = new-object psobject -property @{
+    url=$url; 
+    user=$user;
+    pass=$pass;
+    creds=$creds;
+    server=$server
+  }
   return $conn
 }
 
@@ -274,6 +352,65 @@ VALUES ('${UserID}', '${BuddyAddr}', '', '${GroupName}', 3)
   $null = Get-UcSqlUpdate $AxlConn $sql
 }
 
+function Add-Buddy {
+<#
+  .synopsis
+  Adds a conatct (aka buddy) to someone's contact list.
+  
+  .description
+  There is no AXL method to manipulate contact list entries, so this function uses SQL to modify the database
+  directly.  Use at your own risk.
+  
+  .parameter AxlConn
+  Connection object created with New-AxlConnection.
+
+  .parameter UserID
+  userid
+  
+  .parameter BuddyAddr
+  SIP address of the contact to delete
+  
+  .parameter GroupName
+  Contact list group, as seen in the Jabber client, that will contains the new contact.  Note, group names
+  in CUP are case-sensitive.
+  
+  .parameter BuddyNickName
+  Display name for this contact.  By default this is set to the BuddyAddr
+  
+  .example
+  Add-Buddy asmithee jane.doe@example.com "My Contacts"
+
+#>
+  Param(
+    [Parameter(Mandatory=$true)][psobject]
+    $AxlConn,
+    
+    [Parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+    [string]
+    $UserID,
+    
+    [Parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+    [alias("contact_jid")][string]
+    $BuddyAddr,
+    
+    [Parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+    [alias("group_name")][string]
+    $GroupName,
+    
+    [Parameter(ValueFromPipelineByPropertyName=$true)]
+    [alias("nickname")][string]
+    [string]
+    $BuddyNickName
+  )
+  $sql = @"
+INSERT INTO RosterSyncQueue 
+(userid, buddyjid, buddynickname, groupname, action) 
+VALUES ('${UserID}', '${BuddyAddr}', '${BuddyNickName}', '${GroupName}', 1)
+"@
+  write-verbose "sql = $sql"
+  $null = Get-UcSqlUpdate $AxlConn $sql
+}
+
 function Get-BuddyList {
 <#
   .synopsis
@@ -285,24 +422,72 @@ function Get-BuddyList {
   
   .parameter axlconn
   Connection object created with New-AxlConnection.
+
+  .parameter force
+  Also show hidden contacts.  That is, contacts which are not in a group and do not appear in
+  the Jabber client contact list.
   
   .example
   Get-BuddyList -AxlConn $conn -user "John Doe"
 #>
   Param(
     [Parameter(Mandatory=$true)][psobject]$AxlConn,
-    
-    [Parameter(Mandatory=$true)][string]$user
+    [Parameter(Mandatory=$true)][string]$user,
+    [switch]$Force
   )
   $sql = @"
-select u.userid,r.contact_jid,r.nickname,g.group_name 
-from groups g 
-inner join enduser u on u.xcp_user_id = g.user_id 
-inner join rosters r on g.roster_id = r.roster_id 
-where u.userid like '${user}'
-order by g.group_name,r.contact_jid
+select u.userid,r.contact_jid,r.nickname,r.state,g.group_name 
+from rosters r join enduser u on u.xcp_user_id = r.user_id 
+left outer join groups g on g.roster_id = r.roster_id 
+where lower(u.userid) like lower('${user}')
+order by r.contact_jid
 "@
-  Get-UcSqlQuery $AxlConn $sql
+  foreach ($row in Get-UcSqlQuery $AxlConn $sql) {
+    $row.PSObject.TypeNames.Insert(0,'UcBuddy')
+    if ($row.group_name.length -gt 0 -or $force) {
+      $row
+    }
+  }
 }
 
-Export-ModuleMember -Function Search-UcLicenseCapabilities, New-AxlConnection, Get-UcSqlQuery, Get-UcSqlUpdate, Get-BuddyList, Remove-Buddy
+function ConvertFrom-SecureString {
+# .synopsis
+#  Converts a SecureString to a string
+#
+# .outputs
+#  String
+  Param(
+    [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
+    [System.Security.SecureString[]]
+    $secure
+  )
+  process {
+    foreach ($ss in $secure) {
+      $val = [System.Runtime.InteropServices.Marshal]::SecureStringToGlobalAllocUnicode($ss)
+      [System.Runtime.InteropServices.Marshal]::PtrToStringUni($val)
+      [System.Runtime.InteropServices.Marshal]::ZeroFreeGlobalAllocUnicode($val)
+    }
+  }
+}
+
+function ConvertTo-SecureString {
+# .synopsis
+#  Converts a string to a SecureString
+# .outputs
+#  System.Security.SecureString
+  Param(
+    [Parameter(Mandatory=$true, ValueFromPipeline=$true)]
+    [string]
+    $PlainString
+  )
+  Process {
+    $PlainString.tochararray() | foreach-object `
+      -Begin {$ss = new-object System.Security.SecureString} `
+      { $ss.appendchar($_) } `
+      -End { $ss }
+  }
+}
+
+Export-ModuleMember -Function Search-UcLicenseCapabilities, New-AxlConnection, `
+  Get-UcSqlQuery, Get-UcSqlUpdate, Get-BuddyList, Remove-Buddy, Add-buddy, `
+  Search-Users
