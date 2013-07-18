@@ -8,15 +8,9 @@
       </ViewSelectedBy>
       <TableControl>
         <TableHeaders>
-          <TableColumnHeader>
-            <Width>20</Width>
-          </TableColumnHeader>
-          <TableColumnHeader>
-            <Width>12</Width>
-          </TableColumnHeader>
-          <TableColumnHeader>
-            <Width>20</Width>
-          </TableColumnHeader>
+          <TableColumnHeader><Width>20</Width></TableColumnHeader>
+          <TableColumnHeader><Width>12</Width></TableColumnHeader>
+          <TableColumnHeader><Width>20</Width></TableColumnHeader>
           <TableColumnHeader>
             <Label>primaryExtension</Label>
             <Width>25</Width>
@@ -55,40 +49,20 @@ if ($_.primaryextension.pattern) {
       </ViewSelectedBy>
       <TableControl>
         <TableHeaders>
-          <TableColumnHeader>
-            <Width>15</Width>
-          </TableColumnHeader>
-          <TableColumnHeader>
-            <Width>30</Width>
-          </TableColumnHeader>
-          <TableColumnHeader>
-            <Width>15</Width>
-          </TableColumnHeader>
-          <TableColumnHeader>
-            <Width>5</Width>
-          </TableColumnHeader>
-          <TableColumnHeader>
-            <Width>10</Width>
-          </TableColumnHeader>
+          <TableColumnHeader><Width>15</Width></TableColumnHeader>
+          <TableColumnHeader><Width>30</Width></TableColumnHeader>
+          <TableColumnHeader><Width>22</Width></TableColumnHeader>
+          <TableColumnHeader><Width>5</Width></TableColumnHeader>
+          <TableColumnHeader><Width>15</Width></TableColumnHeader>
         </TableHeaders>
         <TableRowEntries>
           <TableRowEntry>
             <TableColumnItems>
-              <TableColumnItem>
-                <PropertyName>userid</PropertyName>
-              </TableColumnItem>
-              <TableColumnItem>
-                <PropertyName>contact_jid</PropertyName>
-              </TableColumnItem>
-              <TableColumnItem>
-                <PropertyName>nickname</PropertyName>
-              </TableColumnItem>
-              <TableColumnItem>
-                <PropertyName>state</PropertyName>
-              </TableColumnItem>
-              <TableColumnItem>
-                <PropertyName>group_name</PropertyName>
-              </TableColumnItem>
+              <TableColumnItem><PropertyName>Owner</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Buddy</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Nickname</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>State</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Group</PropertyName></TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>
         </TableRowEntries>
@@ -96,20 +70,16 @@ if ($_.primaryextension.pattern) {
     </View>
 
 
-    <!-- DirectoryNumber -->
+    <!-- PrimaryExtension -->
     <View>
-      <Name>UcDN</Name>
+      <Name>UcExtension</Name>
       <ViewSelectedBy>
-        <TypeName>UcDN</TypeName>
+        <TypeName>UcExtension</TypeName>
       </ViewSelectedBy>
       <TableControl>
         <TableHeaders>
-          <TableColumnHeader>
-            <Width>15</Width>
-          </TableColumnHeader>
-          <TableColumnHeader>
-            <Width>20</Width>
-          </TableColumnHeader>
+          <TableColumnHeader><Width>15</Width></TableColumnHeader>
+          <TableColumnHeader><Width>20</Width></TableColumnHeader>
         </TableHeaders>
         <TableRowEntries>
           <TableRowEntry>
@@ -126,5 +96,103 @@ if ($_.primaryextension.pattern) {
       </TableControl>
     </View>
 
+    <!-- DirectoryNumber -->
+    <View>
+      <Name>UcDN</Name>
+      <ViewSelectedBy>
+        <TypeName>UcDN</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Width>15</Width></TableColumnHeader>
+          <TableColumnHeader><Width>20</Width></TableColumnHeader>
+          <TableColumnHeader><Width>50</Width></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>DN</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>Partition</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>Description</PropertyName>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+
+    <!-- CUP Uri ACL -->
+    <View>
+      <Name>UcUserAcl</Name>
+      <ViewSelectedBy><TypeName>UcUserAcl</TypeName></ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Width>23</Width></TableColumnHeader>
+          <TableColumnHeader><Width>35</Width></TableColumnHeader>
+          <TableColumnHeader><Width>14</Width></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>user</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>uri</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>policy</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
+    
+    <!-- Line Appearance -->
+    <View>
+      <Name>UcLineAppearance</Name>
+      <ViewSelectedBy>
+        <TypeName>UcLineAppearance</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Width>12</Width></TableColumnHeader>
+          <TableColumnHeader><Width>16</Width></TableColumnHeader>
+          <TableColumnHeader><Width>18</Width></TableColumnHeader>
+          <TableColumnHeader><Width>22</Width></TableColumnHeader>
+          <TableColumnHeader><Width>16</Width></TableColumnHeader>
+          <TableColumnHeader><Width>20</Width></TableColumnHeader>
+          <TableColumnHeader><Width>10</Width></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem>
+                <PropertyName>dn</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>device</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>model</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>devicedescription</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>callerid</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>linelabel</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>mask</PropertyName>
+              </TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
   </ViewDefinitions>
+
 </Configuration>
