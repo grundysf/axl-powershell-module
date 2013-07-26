@@ -4,6 +4,7 @@
 # 2013
 #
 $ErrorActionPreference = "Stop";
+set-strictmode -version Latest
 
 #https://[CCM-IP-ADDRESS]:8443/axl/
 
@@ -20,7 +21,9 @@ function get-cache {
     [parameter(mandatory=$true)]
     $Key
   )
-  $cache.$CacheSet.$key
+  if ($cache.$cacheset.contains($key)) {
+    $cache.$CacheSet.$key
+  }
 }
 function set-cache {
   Param(
