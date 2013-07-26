@@ -8,12 +8,13 @@ $ErrorActionPreference = "Stop";
 #https://[CCM-IP-ADDRESS]:8443/axl/
 
 $cache = @{
-  enduserpkid=@{}
+  enduserpkid    =@{} # userid=pkid
+  nodesubcluster =@{} # nodename=subclustername
 }
 function get-cache {
   Param(
     [parameter(mandatory=$true)]
-    [ValidateSet("enduserpkid")]
+    [ValidateSet('enduserpkid','nodesubcluster')]
     $CacheSet
     ,
     [parameter(mandatory=$true)]
@@ -24,7 +25,7 @@ function get-cache {
 function set-cache {
   Param(
     [parameter(mandatory=$true)]
-    [ValidateSet("enduserpkid")]
+    [ValidateSet('enduserpkid','nodesubcluster')]
     $CacheSet
     ,
     [parameter(mandatory=$true)]
@@ -64,7 +65,7 @@ function Execute-SOAPRequest {
   }
   
   #write-host "Sending SOAP Request To Server: $URL" 
-  $webReq = [System.Net.WebRequest]::Create($AxlConn.url)
+  $webReq = [System.Net.HttpWebRequest]::Create($AxlConn.url)
   $webReq.Headers.Add("SOAPAction","SOAPAction: CUCM:DB ver=8.5")
   $creds = ConvertFrom-SecureString $AxlConn.creds
   $webReq.Headers.Add("Authorization","Basic "+$creds)
@@ -73,32 +74,53 @@ function Execute-SOAPRequest {
   #$webReq.Credentials = new-object system.net.networkcredential @($cred.username, $cred.password)
   #$webReq.PreAuthenticate = $true
 
-  $webReq.ContentType = "text/xml;charset=`"utf-8`""
+  $webReq.ContentType = 'text/xml;charset="utf-8"'
   $webReq.Accept      = "text/xml"
   $webReq.Method      = "POST"
-  
+
+  if ( -not $axlconn.checkcert ) {
+    $callbackSave = [system.net.servicepointmanager]::ServerCertificateValidationCallback = {$true} 
+  }
   #write-host "Initiating Send."
   $requestStream = $webReq.GetRequestStream()
   $XmlDoc.Save($requestStream)
   $requestStream.Close()
+  if ( -not $axlconn.checkcert ) {
+    [system.net.servicepointmanager]::ServerCertificateValidationCallback = $callbackSave
+  }
   
   #write-host "Send Complete, Waiting For Response."
-  $resp = $webReq.GetResponse()
+  try {$resp = $webReq.GetResponse()}
+  catch [System.Net.WebException] {
+    $resp = $_.Exception.Response
+    if (200,500 -notcontains $resp.statuscode) {
+      throw $_.Exception.InnerException
+    }
+  }
+  if ($resp.contenttype -notmatch 'xml') {
+    $msg = "Server returned $($resp.statuscode.value__) $($resp.statusdescription)`n" + `
+      "Content-Type: $($resp.contenttype)`n" + `
+      "Content-Length: $($resp.contentlength)"
+    throw $msg
+  }
+
   $responseStream = $resp.GetResponseStream()
-  $soapReader = [System.IO.StreamReader]($responseStream)
-  $ReturnXml = [Xml] $soapReader.ReadToEnd()
-  $responseStream.Close()
+  $streamRead = [System.IO.StreamReader]($responseStream)
+  $ReturnXml = [Xml] $streamRead.ReadToEnd()
+  $streamRead.Close()
 
   if ($XmlTraceFile) {
     "`n",$ReturnXml.innerxml | out-file -encoding ascii -append $XmlTraceFile
   }
 
-  # check to see if a fault occurred
-  $nsm = new-object system.xml.XmlNameSpaceManager -ArgumentList $xml.NameTable
+  # check to see if a soap fault is present
+  $nsm = new-object system.xml.XmlNameSpaceManager $xml.NameTable
   $nsm.addnamespace("soapenv", "http://schemas.xmlsoap.org/soap/envelope/")
-  $faultnode = $xml.selectsinglenode("//soapenv:Fault/faultstring", $nsm)
+  $faultnode = $returnxml.selectsinglenode("//soapenv:Fault/faultstring", $nsm)
   if ($faultnode -ne $null) {
-    throw "SOAP fault: $($faultnode.innertext)"
+    $msg = "Server returned $($resp.statuscode.value__) $($resp.statusdescription)`n" + `
+      "SOAP fault: $($faultnode.innertext)"
+    throw $msg
   }
 
   write-verbose "Response Received."
@@ -176,11 +198,12 @@ function Get-UcSqlQuery {
   elseif ($PSCmdlet.ParameterSetName -eq "File") {
     $textNode = $xml.CreateTextNode( ((get-content $File) -join "`n") )
   }
+  write-verbose "SQL Text: `n$($textnode.innertext)"
   $null = $xml.SelectSingleNode("//sql").prependchild($textNode)
   $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $XmlTraceFile
   $resultArray=@()
 
-  $nsm = new-object system.xml.XmlNameSpaceManager -ArgumentList $retXml.NameTable
+  $nsm = new-object system.xml.XmlNameSpaceManager $retXml.NameTable
   $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
 
   $base = $retXml.selectSingleNode("//return")
@@ -262,6 +285,132 @@ function ConvertFrom-ColType {
   
   $t
 }
+
+function Get-UcAssignedUsers {
+# .outputs
+#  PsObjects with (properties)
+  Param (
+    [Parameter(Mandatory=$true)][psobject]$AxlConn,
+    [string]$userid="%",
+    [string]$node="%",
+
+    # Write XML request/response to a file for troubleshooting
+    [string]$XmlTraceFile
+  )
+  $xml = [xml]@'
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:listAssignedSubClusterUsersByNode>
+      <searchCriteria>
+        <userid/><node/>
+      </searchCriteria>
+      <returnedTags>
+        <node/><userid/><failedover/>
+      </returnedTags>
+    </ns:listAssignedSubClusterUsersByNode>
+  </soapenv:Body>
+</soapenv:Envelope>
+'@
+  $nsm = new-object system.xml.XmlNameSpaceManager -ArgumentList $xml.NameTable
+  $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
+  $textNode = $xml.CreateTextNode($userid)
+  $null = $xml.SelectSingleNode("//searchCriteria/userid").prependchild($textNode)
+  $textNode = $xml.CreateTextNode($node)
+  $null = $xml.SelectSingleNode("//searchCriteria/node").prependchild($textNode)
+  $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $xmltracefile
+
+  $retXml
+#  $retXml.selectNodes("//licenseCapabilities") | % -begin {$resultArray=@()} {
+#    $node = new-object psobject
+#    $node | add-member noteproperty userid $_.selectsinglenode("userid").innertext
+#    $node | add-member noteproperty enableUpc $_.selectsinglenode("enableUpc").innertext
+#  }
+}
+
+# .outputs
+#  PsObjects with (properties)
+function Set-AddAssignedSubClusterUsersByNode {
+  Param (
+    [Parameter(Mandatory=$true)][psobject]$AxlConn,
+    [string]$userid="%",
+    [string]$node="%",
+
+    # Write XML request/response to a file for troubleshooting
+    [string]$XmlTraceFile
+  )
+  $xml = [xml]@'
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:addAssignedSubClusterUsersByNode>
+      <userid/><node/>
+    </ns:addAssignedSubClusterUsersByNode>
+  </soapenv:Body>
+</soapenv:Envelope>
+'@
+  $nsm = new-object system.xml.XmlNameSpaceManager -ArgumentList $xml.NameTable
+  $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
+  $textNode = $xml.CreateTextNode($userid)
+  $null = $xml.SelectSingleNode("//userid").prependchild($textNode)
+  $textNode = $xml.CreateTextNode($node)
+  $null = $xml.SelectSingleNode("//node").prependchild($textNode)
+  $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $xmltracefile
+
+  $retXml
+#  $retXml.selectNodes("//licenseCapabilities") | % -begin {$resultArray=@()} {
+#    $node = new-object psobject
+#    $node | add-member noteproperty userid $_.selectsinglenode("userid").innertext
+#    $node | add-member noteproperty enableUpc $_.selectsinglenode("enableUpc").innertext
+#  }
+}
+
+
+# .outputs
+#  PsObjects with (userid, enableUps, and enableUpc properties set)
+function Set-UcLicenseCapabilities {
+  Param (
+    [Parameter(Mandatory=$true)][psobject]$AxlConn,
+    [parameter(mandatory=$true)][string]$userid,
+    [parameter(Mandatory=$true)][bool]$enableUpc,
+
+    # Write XML request/response to a file for troubleshooting
+    [string]$XmlTraceFile
+  )
+  $xml = [xml]@"
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:updateLicenseCapabilities>
+      <userid/>
+      <enableUps/>
+      <enableUpc/>
+    </ns:updateLicenseCapabilities>
+  </soapenv:Body>
+</soapenv:Envelope>
+"@
+  $nsm = new-object system.xml.XmlNameSpaceManager -ArgumentList $xml.NameTable
+  $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
+  $textNode = $xml.CreateTextNode($userid)
+  $null = $xml.SelectSingleNode("//ns:updateLicenseCapabilities/userid",$nsm).prependchild($textNode)
+  $textNode = $xml.CreateTextNode($enableUpc.toString())
+  $null = $xml.SelectSingleNode("//ns:updateLicenseCapabilities/enableUps",$nsm).prependchild($textNode)
+  $textNode = $textNode.clone()
+  $null = $xml.SelectSingleNode("//ns:updateLicenseCapabilities/enableUpc",$nsm).prependchild($textNode)
+  $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $XmlTraceFile
+
+  $retNode = $retXml.SelectSingleNode("//ns:updateLicenseCapabilitiesResponse/return",$nsm)
+  if (-not $retNode) {
+    throw "Failed to find //updateLicenseCapabilitiesResponse/return node in server's response.  $($retXml.outerXML)"
+  }
+  if (-not ($retNode.innerText -match '^(true|{[a-f\d-]{36}\})$')) {
+    throw "Server returned unexpected result.  Expected 'true' or a GUID, but got '$($retNode.innerText)"
+  }
+}
+
 
 # .outputs
 #  PsObjects with (userid, enableUps, and enableUpc properties set)
@@ -428,6 +577,9 @@ function New-AxlConnection {
   Use (Read-Host -AsSecureString -Prompt Password) to create a SecureString.  If you do not supply
   this parameter, then you will be prompted for the password.
   
+  .parameter NoCheckCertificate
+  Do not validate the server's SSL certificate.
+  
   .example
   $cucm = New-AxlConnection cm1.example.com admin mypass
   
@@ -435,7 +587,8 @@ function New-AxlConnection {
   Param(
     [Parameter(Mandatory=$true)][string]$Server,
     [Parameter(Mandatory=$true)][string]$User,
-    [System.Security.SecureString]$Pass
+    [System.Security.SecureString]$Pass,
+    [switch]$NoCheckCertificate
   )
   if (!$Pass) {$Pass = Read-Host -AsSecureString -Prompt "Password for ${User}@${Server}"}
 
@@ -449,8 +602,10 @@ function New-AxlConnection {
     user=$user;
     pass=$pass;
     creds=$creds;
-    server=$server
+    server=$server;
+    checkcert=!$nocheckcertificate
   }
+  $conn | add-member -force scriptmethod tostring {"{0}@{1}" -f $this.user,$this.server}
   return $conn
 }
 
@@ -580,44 +735,173 @@ order by
   }
 }
 
-function Get-UcCupUsers {
+function Get-UcCupNode {
+<#
+  .synopsis
+  Get a list of CUP nodes (servers)
+  .description
+  Get a list of CUP nodes (servers)
+  .outputs
+  [psobject]
+#>
+  Param(
+    # Connection object created with New-AxlConnection.
+    [Parameter(Mandatory=$true)]
+    $AxlConn
+    ,
+    [validatescript({$_ -notmatch "['\s]"})]
+    [string]$node="%"
+  )
+  $sql = @"
+select 
+  en.name node,
+  sc.name subcluster,
+  tnu.name usage 
+from 
+  enterprisenode en 
+  join enterprisesubcluster sc on en.subclusterid=sc.id 
+  join processnode pn on en.fkprocessnode=pn.pkid 
+  join typenodeusage tnu on tnu.enum=pn.tknodeusage
+where
+  en.name like '${node}'
+"@
+  foreach ($row in Get-UcSqlQuery -axl $AxlConn $sql) {
+    set-cache nodesubcluster $row.node $row.subcluster
+    $o = new-object psobject
+    $o | add-member noteproperty node $row.node
+    $o | add-member noteproperty subcluster $row.subcluster
+    $o | add-member noteproperty usage $row.usage
+    $o.psobject.typenames.insert(0,'UcCupNode')
+    $o
+  }
+}
+function Get-UcCupUser {
 <#
   .synopsis
   Get a list of CUP-enabled users
   
   .outputs
-  [string] List of CUP-enabled userid's
+  List of CUP-enabled users
   
   .parameter AxlConn
   Connection object created with New-AxlConnection.
   
   .parameter User
   Only return CUP users matching the specified pattern.  SQL wildcard charater % is allowed.
+  .parameter force
+  Also show unlicenced users.  The default is to show only users who are licenced for CUP.
 #>
   [CmdletBinding()]
   Param(
     [Parameter(Mandatory=$true)]
-    $AxlConn,
+    $AxlConn
+    ,
     [ValidateScript({$_ -notmatch "[ ']"})]
     $User="%"
+    ,
+    [switch]$force
   )
+  $licencefilter = "and l.enablecupc = 't'"
+  if ($force) { $licencefilter = '' }
   $sql = @"
 select 
- userid
+ e.userid,
+ e.pkid,
+ ex.firstname,
+ ex.lastname,
+ l.enablecupc licensed,
+ -- e.tkassignmentstate,
+ node.name node,
+ es.name subcluster,
+ e.failedover
 from 
- enduser e 
- join enduserlicense l on e.pkid=l.fkenduser 
-where
- enablecups = 't'
- and enablecupc = 't'
- and userid like '${User}'
+ enduser e
+ left outer join enduserlicense l on e.pkid=l.fkenduser
+ left outer join enterprisenode node on e.primarynodeid=node.id
+ left outer join enterprisesubcluster es on node.subclusterid=es.id
+ join enduserex ex on ex.fkenduser=e.pkid
+where 1=1
+ ${licencefilter}
+ and e.userid like '${User}'
 order by userid
 "@
-  foreach ($row in Get-UcSqlQuery $AxlConn $sql) {
-    $row.userid
+  foreach ($row in Get-UcSqlQuery -axl $AxlConn $sql) {
+    set-cache enduserpkid $row.userid $row.pkid
+    set-cache nodesubcluster $row.node $row.subcluster
+    $o = new-object psobject
+    $o | add-member noteproperty userid $row.userid
+    $o | add-member noteproperty firstname $row.firstname
+    $o | add-member noteproperty lastname $row.lastname
+    $o | add-member noteproperty licensed ($row.licensed -eq 't')
+    #$o | add-member noteproperty assigned ($row.tkassignmentstate -eq 1)
+    $o | add-member noteproperty node $row.node
+    # Axl does not return proper Xml null values. 
+    # It returns <node/>, when it should be <node xsi:nil="true"/>
+    if ($o.node -eq '') {$o.node = $null}
+    $o | add-member noteproperty failedover ($row.failedover -eq 't')
+    $o.psobject.typenames.insert(0,'CupUser')
+    $o
   }
 }
 
+
+function Set-UcCupUser {
+<#
+  .parameter AxlConn
+  Connection object created with New-AxlConnection.
+#>
+  [CmdletBinding()]
+  Param(
+    [Parameter(Mandatory=$true)]
+    $AxlConn
+    ,
+    [parameter(mandatory=$true,ValueFromPipeline=$true)]
+    [ValidateScript({
+      $_ -is [string] -or ($_ -is [psobject] -and $_.psobject.typenames[0] -eq 'CupUser')
+    })]
+    $user
+    ,
+    [string]$node
+  )
+  Begin {
+    $nodecache = @{}
+  }
+  Process {
+    if ($node) {
+      if ($user -is [string]) {
+        $userobj = get-uccupuser -axl $axlconn $user
+        if (-not $userobj) {
+          write-warning "'$user' is not a licensed CUP user"
+          return
+        }
+      } else {
+        $userobj = $user
+      }
+      if ($userobj.node -eq $node) {
+        # Nothing to do.  This user is already assigned to the specified node
+        return
+      }
+      
+      # Retrieve the subclustername for the given node
+      if (-not ($subclust = get-cache nodesubcluster $node)) {
+        if (-not ($nodeobj = get-uccupnode -axl $axlconn $node)) {
+          throw "unable to find cups node '$node'"
+        }
+        $subclust = $nodeobj.subcluster
+      }
+      elseif ($userobj.node -eq $null) {
+        # need to execute adduser stored proc since this user is not currently assigned
+        $sql = "execute procedure addUser('$($userobj.userid)', '${subclust}', '${node}')"
+        $null = get-ucsqlupdate -axl $axlconn $sql
+      }
+      elseif ($userobj.node -ne $node) { 
+        # need to execute moveuser stored proc to assign the user to a different node
+        $sql = "execute procedure moveUser('$($userobj.userid)', '${subclust}', '${node}')"
+        $null = get-ucsqlupdate -axl $axlconn $sql
+      }
+    }
+  }
+}
 
 function Get-StoredProc {
 <#
@@ -650,7 +934,7 @@ where
   }
   else {
     # No SP specified.  List all stored procecures
-    $sql = "select procid, procname from sysprocedures"
+    $sql = "select procid, procname from sysprocedures where isproc ='t'"
     foreach ($row in Get-UcSqlQuery $AxlConn $sql) {
       $row.PSObject.TypeNames.Insert(0,'UcStoredProc')
       $row
@@ -1010,8 +1294,8 @@ function Add-UcUserAcl {
     #pkid was not given, so we need to fetch it
     if (-not ($pkid = get-cache enduserpkid $user)) {
       $sql = "select pkid from enduser where userid = '${User}'"
-      if (-not ($pkid = get-ucsqlquery $AxlConn $sql | select -expand pkid)) {
-        throw "Unable to find pkid for $User.  Is this a valid CUP user"
+      if (-not ($pkid = get-ucsqlquery -axl $AxlConn $sql | select -expand pkid)) {
+        throw "Unable to find pkid for $User.  Is this a valid CUP user?"
       }
       set-cache enduserpkid $user $pkid
     }
@@ -1183,8 +1467,9 @@ function ConvertTo-SecureString {
 }
 
 
-Export-ModuleMember -Function Get-UcLicenseCapabilities, New-AxlConnection, `
+Export-ModuleMember -Function Get-UcLicenseCapabilities, Set-UcLicenseCapabilities, New-AxlConnection, `
   Get-UcSqlQuery, Get-UcSqlUpdate, Get-UcBuddy, Remove-UcBuddy, Add-UcBuddy, `
   Get-UcUser, Get-UcDialPlans, Get-UcDN, Get-UcLineAppearance, Rename-UcBuddy, `
-  Get-UcWatcher, get-table, Get-StoredProc, Get-UcUserAcl, Get-UcCupUsers, `
-  Add-UcUserAcl
+  Get-UcWatcher, get-table, Get-StoredProc, Get-UcUserAcl, Get-UcCupUser, `
+  Set-UcCupUser, Add-UcUserAcl, Get-UcAssignedUsers, `
+  Set-AddAssignedSubClusterUsersByNode, Get-UcCupNode
