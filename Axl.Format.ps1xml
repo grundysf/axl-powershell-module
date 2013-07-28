@@ -163,6 +163,7 @@ if ($_.primaryextension.pattern) {
           <TableColumnHeader><Width>16</Width></TableColumnHeader>
           <TableColumnHeader><Width>20</Width></TableColumnHeader>
           <TableColumnHeader><Width>10</Width></TableColumnHeader>
+          <TableColumnHeader><Width>10</Width></TableColumnHeader>
         </TableHeaders>
         <TableRowEntries>
           <TableRowEntry>
@@ -187,6 +188,9 @@ if ($_.primaryextension.pattern) {
               </TableColumnItem>
               <TableColumnItem>
                 <PropertyName>mask</PropertyName>
+              </TableColumnItem>
+              <TableColumnItem>
+                <PropertyName>userid</PropertyName>
               </TableColumnItem>
             </TableColumnItems>
           </TableRowEntry>

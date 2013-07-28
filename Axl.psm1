@@ -699,7 +699,7 @@ function Get-Table {
     [Parameter(ParameterSetName="List",Position=1)]
     [switch]$IncludeSystem
   )
-  if ($Name) {
+  if ($PSCmdlet.ParameterSetName -eq "Detail") {
     # List details for the specified table
 
     # first get a list of User-Defined Types
@@ -921,7 +921,7 @@ function Get-StoredProc {
     [Parameter(ParameterSetName="Detail",Position=1)]
     $Name
   )
-  if ($Name) {
+  if ($PSCmdlet.ParameterSetName -eq "Detail") {
     # List definition for the specified stored proc
     $sql = @"
 select
@@ -945,6 +945,117 @@ where
   }
 }
 
+function Get-UcEm {
+<#
+  .synopsis
+  Get active Extension Mobility logins
+#>
+  Param(
+    # Connection object created with New-AxlConnection.
+    [parameter(mandatory=$true)]
+    [psobject]$AxlConn
+  )
+  $sql=@"
+SELECT
+ dev.name Device,
+ udp.name DeviceProfile,
+ e.userid UserID,
+ em.logintime
+FROM
+ extensionmobilitydynamic em
+ join enduser e on em.fkenduser=e.pkid
+ join device udp on udp.pkid=em.fkdevice_currentloginprofile
+ join device dev on dev.pkid=em.fkdevice
+"@
+  get-ucsqlquery -axl $AxlConn $sql
+}
+
+function Set-UcEm {
+<#
+  .synopsis
+  Login/Logout a phone using Extension Mobility
+#>
+  Param(
+    # Connection object created with New-AxlConnection.
+    [Parameter(Mandatory=$true,Position=0)]
+    $AxlConn
+    ,
+    [parameter(ParameterSetName='login',Mandatory=$true,
+     ValueFromPipelineByPropertyName=$true)][switch]
+    $Login
+    ,
+    [parameter(ParameterSetName='logout',Mandatory=$true,
+     ValueFromPipelineByPropertyName=$true)][switch]
+    $Logout
+    ,
+    [parameter(Mandatory=$true,
+     ValueFromPipelineByPropertyName=$true)][string]
+    $Device
+    ,
+    [parameter(ParameterSetName='login',Mandatory=$true,
+     ValueFromPipelineByPropertyName=$true)][string]
+    $ProfileName
+    ,
+    [parameter(ParameterSetName='login',Mandatory=$true,
+     ValueFromPipelineByPropertyName=$true)][string]
+    $UserID
+    ,
+    [switch]$XmlTraceFile
+  )
+  Begin {
+    $nsm = new-object system.xml.XmlNameSpaceManager (new-object system.xml.nametable)
+    $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
+  }
+  Process {
+    if ($PSCmdlet.ParameterSetName -eq "login") {
+      $xml = [xml]@'
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:doDeviceLogin>
+      <deviceName/>
+      <loginDuration>0</loginDuration>
+      <profileName/><userId/>
+    </ns:doDeviceLogin>
+  </soapenv:Body>
+</soapenv:Envelope>
+'@
+      $textNode = $xml.CreateTextNode($Device)
+      $null = $xml.SelectSingleNode("//deviceName").prependchild($textNode)
+      $textNode = $xml.CreateTextNode($ProfileName)
+      $null = $xml.SelectSingleNode("//profileName").prependchild($textNode)
+      $textNode = $xml.CreateTextNode($UserID)
+      $null = $xml.SelectSingleNode("//userId").prependchild($textNode)
+    }
+
+    if ($PSCmdlet.ParameterSetName -eq "logout") {
+      $xml = [xml]@'
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:doDeviceLogout>
+      <deviceName/>
+    </ns:doDeviceLogout>
+  </soapenv:Body>
+</soapenv:Envelope>
+'@
+      $textNode = $xml.CreateTextNode($Device)
+      $null = $xml.SelectSingleNode("//deviceName").prependchild($textNode)
+    }
+
+    $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $xmltracefile
+  
+    $retNode = $retXml.selectSingleNode("//return", $nsm)
+    if (-not $retNode) {
+      throw "Failed to find //return element in server's response.  $($retXml.outerXML)"
+    }
+    if (-not ($retNode.innerText -match '^(true|{[a-f\d-]{36}\})$')) {
+      throw "Server returned unexpected result.  Expected 'true' or a GUID, but got '$($retNode.innerText)"
+    }
+  }
+}
 
 function Add-UcBuddy {
 <#
@@ -1158,7 +1269,7 @@ order by
   write-verbose "SQL $sql"
   foreach ($row in Get-UcSqlQuery $AxlConn $sql) {
     $row.PSObject.TypeNames.Insert(0,'UcBuddy')
-    if ($row.group.length -gt 0 -or $force) {
+    if (($row.group.length -gt 0 -and $row.state -ne 2) -or $force) {
       $row
     }
   }
@@ -1356,11 +1467,15 @@ SELECT first ${effectivelimit}
  dmp.e164mask mask,
  d.name device,
  d.description devicedescription,
- m.name model
+ m.name model,
+ e.userid
 FROM
  numplan np
   join routepartition rp on np.fkroutepartition=rp.pkid
-  right outer join devicenumplanmap dmp on np.pkid=dmp.fknumplan,
+  right outer join devicenumplanmap dmp on np.pkid=dmp.fknumplan
+  left outer join devicenumplanmapendusermap deu on deu.fkdevicenumplanmap=dmp.pkid
+  left outer join enduser e on deu.fkenduser=e.pkid
+ ,
  device d
   join typemodel m on d.tkmodel=m.enum
 WHERE
@@ -1475,4 +1590,5 @@ Export-ModuleMember -Function Get-UcLicenseCapabilities, Set-UcLicenseCapabiliti
   Get-UcUser, Get-UcDialPlans, Get-UcDN, Get-UcLineAppearance, Rename-UcBuddy, `
   Get-UcWatcher, get-table, Get-StoredProc, Get-UcUserAcl, Get-UcCupUser, `
   Set-UcCupUser, Add-UcUserAcl, Get-UcAssignedUsers, `
-  Set-AddAssignedSubClusterUsersByNode, Get-UcCupNode
+  Set-AddAssignedSubClusterUsersByNode, Get-UcCupNode,
+  Get-UcEm, Set-UcEm
