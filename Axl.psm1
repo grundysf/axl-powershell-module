@@ -93,10 +93,15 @@ function Execute-SOAPRequest {
   }
   
   #write-host "Send Complete, Waiting For Response."
+  $resp = $null
   try {$resp = $webReq.GetResponse()}
   catch [System.Net.WebException] {
-    $resp = $_.Exception.Response
-    if (200,500 -notcontains $resp.statuscode) {
+    if ($_.Exception.Response) {
+      if (200,500 -contains $_.Exception.Response.statuscode) {
+        $resp = $_.Exception.Response
+      }
+    }
+    if ($resp -eq $null) {      
       throw $_.Exception.InnerException
     }
   }
@@ -1057,6 +1062,66 @@ function Set-UcEm {
   }
 }
 
+function Set-UcPhone {
+<#
+  .synopsis
+  Set properties of a phone
+#>
+  Param(
+    # Connection object created with New-AxlConnection.
+    [Parameter(Mandatory=$true,Position=0)]
+    $AxlConn
+    ,
+    [parameter(Mandatory=$true,
+     ValueFromPipelineByPropertyName=$true)][string]
+    $DeviceName
+    ,
+    [parameter(ValueFromPipelineByPropertyName=$true)][string]
+    $description
+    ,
+    [parameter(ValueFromPipelineByPropertyName=$true)][string]
+    $primaryPhoneName
+    ,
+    [string]$XmlTraceFile
+  )
+  Begin {
+    $nsm = new-object system.xml.XmlNameSpaceManager (new-object system.xml.nametable)
+    $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
+  }
+  Process {
+    $xml = [xml]@'
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:updatePhone>
+      <name/>
+    </ns:updatePhone>
+  </soapenv:Body>
+</soapenv:Envelope>
+'@
+    $xml.SelectSingleNode("//name").innertext = $DeviceName
+    if ($description) {
+      $elem = $xml.CreateElement('description')
+      $xml.SelectSingleNode("//ns:updatePhone",$nsm).appendchild($elem).innertext = $description
+    }
+    if ($primaryPhoneName) {
+      $elem = $xml.CreateElement('primaryPhoneName')
+      $xml.SelectSingleNode("//ns:updatePhone",$nsm).appendchild($elem).innertext = $primaryPhoneName
+    }
+    
+    $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $xmltracefile
+    $retNode = $retXml.selectSingleNode("//return", $nsm)
+    if (-not $retNode) {
+      throw "Failed to find //return element in server's response.  $($retXml.outerXML)"
+    }
+    if (-not ($retNode.innerText -match '^(true|{[a-f\d-]{36}\})$')) {
+      throw "Server returned unexpected result.  Expected 'true' or a GUID, but got '$($retNode.innerText)"
+    }
+  }
+}
+
+
 function Add-UcBuddy {
 <#
   .synopsis
@@ -1591,4 +1656,5 @@ Export-ModuleMember -Function Get-UcLicenseCapabilities, Set-UcLicenseCapabiliti
   Get-UcWatcher, get-table, Get-StoredProc, Get-UcUserAcl, Get-UcCupUser, `
   Set-UcCupUser, Add-UcUserAcl, Get-UcAssignedUsers, `
   Set-AddAssignedSubClusterUsersByNode, Get-UcCupNode,
-  Get-UcEm, Set-UcEm
+  Get-UcEm, Set-UcEm, Set-UcPhone
+
