@@ -1291,27 +1291,27 @@ function Get-UcBuddy {
   Gets the contact list (buddy list) for the specified Presence user.  This uses an SQL query since
   there does not appear to be a way to retrieve this information using another API method.
   
-  .parameter user
-  Presense userid who's contact list will be returned.  SQL wildcard character '%' is allowed.
+  .parameter owner
+  Presence userid who's contact list will be returned.  SQL wildcard character '%' is allowed.
   
-  .parameter buddy
+  .parameter Buddy
   Return only buddes matching the given SIP address.  SQL wildcard character '%' is allowed.  
   If this parameter is omitted, then all buddies for the specified user will be returned.
   
-  .parameter axlconn
+  .parameter AxlConn
   Connection object created with New-AxlConnection.
 
-  .parameter force
+  .parameter Force
   Also show hidden contacts.  That is, contacts which are not in a group and do not appear in
   the Jabber client contact list.
   
   .example
-  Get-UcBuddy -AxlConn $conn -user "John Doe"
+  Get-UcBuddy -AxlConn $conn -owner jdoe
 #>
   Param(
     [Parameter(Mandatory=$true)][psobject]$AxlConn,
-    [Parameter(Mandatory=$true)][string]$user,
-    [ValidateScript({$_ -notmatch "[ ']"})]$buddy="%",
+    [Parameter(Mandatory=$true)][string]$Owner,
+    [ValidateScript({$_ -notmatch "[ ']"})]$Buddy="%",
     [switch]$Force
   )
   $sql = @"
@@ -1326,7 +1326,7 @@ from
  join enduser u on u.xcp_user_id = r.user_id 
  left outer join groups g on g.roster_id = r.roster_id 
 where
- lower(u.userid) like lower('${user}')
+ lower(u.userid) like lower('${owner}')
  and lower(r.contact_jid) like lower('${buddy}')
 order by
  u.userid,r.contact_jid
