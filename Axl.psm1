@@ -465,7 +465,7 @@ function Get-UcLicenseCapabilities {
 
 # .synopsis
 #  psobject[] returns an array of psobjects with (userid, enableUps, and enableUpc properties set)
-function Get-UcUser {
+function Get-UcUser_OBSOLETE {
   Param (
     [Parameter(Mandatory=$true)][psobject]$AxlConn,
     [string]$searchCriteria="%",
@@ -513,6 +513,64 @@ function Get-UcUser {
       $node | add-member noteproperty primaryExtension $ext
     $node.PSObject.TypeNames.Insert(0,'UcUser')
     $node
+  }
+}
+
+# .synopsis
+#  psobject[] returns an array of psobjects with (userid, enableUps, and enableUpc properties set)
+function Get-UcUser {
+  Param (
+    [Parameter(Mandatory=$true)][psobject]$AxlConn,
+    [string]$userid="%",
+    
+    # Write XML request/response to a file for troubleshooting
+    [string]$XmlTraceFile
+  )
+  $sql = @"
+select
+ e.userid,
+ e.firstname,
+ e.lastname,
+ npp.dnorpattern primaryExtension,
+ rpp.name routepartitionPrimary,
+ npi.dnorpattern ipccExtension,
+ rpi.name routepartitionIpcc
+from 
+ enduser e
+ left outer join endusernumplanmap dnp on e.pkid=dnp.fkenduser 
+   and dnp.tkdnusage=(select enum from typednusage where moniker = 'DN_USAGE_PRIMARY')
+ left outer join endusernumplanmap dni on e.pkid=dni.fkenduser 
+   and dni.tkdnusage=(select enum from typednusage where moniker = 'DN_USAGE_ICD')
+ left outer join numplan npp on npp.pkid=dnp.fknumplan
+ left outer join numplan npi on npi.pkid=dni.fknumplan
+ left outer join routepartition rpp on rpp.pkid=npp.fkroutepartition
+ left outer join routepartition rpi on rpi.pkid=npi.fkroutepartition
+where 1=1
+ and e.userid like '${userid}'
+order by userid
+"@
+
+  foreach ($row in get-ucsqlquery -axl $AxlConn $sql -xmltracefile $XmlTraceFile) {
+    $o = new-object psobject
+    $o | add-member noteproperty userid $row.userid
+    $o | add-member noteproperty firstName $row.firstName
+    $o | add-member noteproperty lastName $row.lastName
+    # primaryExtension
+      $ext = new-object psobject
+      $ext | add-member noteproperty pattern $row.primaryExtension
+      $ext | add-member noteproperty routePartitionName $row.routepartitionprimary
+      $ext | add-member scriptmethod ToString {$this.pattern} -force
+      $ext.PSObject.TypeNames.Insert(0,'UcExtension')
+      $o | add-member noteproperty primaryExtension $ext
+    # primaryExtension
+      $ext = new-object psobject
+      $ext | add-member noteproperty pattern $row.ipccExtension
+      $ext | add-member noteproperty routePartitionName $row.routepartitionipcc
+      $ext | add-member scriptmethod ToString {$this.pattern} -force
+      $ext.PSObject.TypeNames.Insert(0,'UcExtension')
+      $o | add-member noteproperty ipccExtension $ext
+    $o.PSObject.TypeNames.Insert(0,'UcUser')
+    $o
   }
 }
 
@@ -727,7 +785,7 @@ where lower(t.tabname)=lower('${Name}')
 order by
  colno
 "@
-    foreach ($row in Get-UcSqlQuery $AxlConn $sql) {
+    foreach ($row in Get-UcSqlQuery -axl $AxlConn $sql) {
       $row.PSObject.TypeNames.Insert(0,'UcTableColumn')
       $row.typename = convertfrom-coltype $row.typecode $row.xtypename
       $row | select no,name,typename,bytes
@@ -821,6 +879,7 @@ select
  ex.firstname,
  ex.lastname,
  l.enablecupc licensed,
+ u.jid imaddress,
  -- e.tkassignmentstate,
  node.name node,
  es.name subcluster,
@@ -831,6 +890,7 @@ from
  left outer join enterprisenode node on e.primarynodeid=node.id
  left outer join enterprisesubcluster es on node.subclusterid=es.id
  join enduserex ex on ex.fkenduser=e.pkid
+ left outer join users u on u.user_id=e.xcp_user_id
 where 1=1
  ${licencefilter}
  and e.userid like '${User}'
@@ -844,10 +904,12 @@ order by userid
     $o | add-member noteproperty firstname $row.firstname
     $o | add-member noteproperty lastname $row.lastname
     $o | add-member noteproperty licensed ($row.licensed -eq 't')
-    #$o | add-member noteproperty assigned ($row.tkassignmentstate -eq 1)
-    $o | add-member noteproperty node $row.node
+    $o | add-member noteproperty imaddress $row.imaddress
     # Axl does not return proper Xml null values. 
     # It returns <node/>, when it should be <node xsi:nil="true"/>
+    if ($o.imaddress -eq '') {$o.imaddress = $null}
+    #$o | add-member noteproperty assigned ($row.tkassignmentstate -eq 1)
+    $o | add-member noteproperty node $row.node
     if ($o.node -eq '') {$o.node = $null}
     $o | add-member noteproperty failedover ($row.failedover -eq 't')
     $o.psobject.typenames.insert(0,'CupUser')
@@ -945,7 +1007,7 @@ where
   }
   else {
     # No SP specified.  List all stored procecures
-    $sql = "select procid, procname from sysprocedures where isproc ='t'"
+    $sql = "select procid, procname from sysprocedures"
     foreach ($row in Get-UcSqlQuery $AxlConn $sql) {
       $row.PSObject.TypeNames.Insert(0,'UcStoredProc')
       $row
@@ -1065,6 +1127,86 @@ function Set-UcEm {
   }
 }
 
+function Get-UcPhone {
+<#
+  .synopsis
+  Get properties of a phone
+#>
+  Param(
+    # Connection object created with New-AxlConnection.
+    [Parameter(Mandatory=$true,Position=0)]
+    $AxlConn
+    ,
+    [parameter(Mandatory=$true,
+     ValueFromPipelineByPropertyName=$true)][string]
+    $DeviceName
+    ,
+    [parameter(ValueFromPipelineByPropertyName=$true)][string]
+    $description
+    ,
+    [parameter(ValueFromPipelineByPropertyName=$true)][string]
+    $primaryPhoneName
+    ,
+    # Device Calling Search Space
+    [parameter(ValueFromPipelineByPropertyName=$true)][string]
+    $CSS
+    ,
+    [string]$XmlTraceFile
+  )
+  Begin {
+    $nsm = new-object system.xml.XmlNameSpaceManager (new-object system.xml.nametable)
+    $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
+  }
+  Process {
+    $xml = [xml]@'
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:getPhone>
+      <name/>
+      <returnedTags>
+       <name/><description/><product/><model/><callingSearchSpaceName/>
+       <devicePoolName/>
+       <lines>
+        <line>
+         <dirn><pattern/><routePartitionName/></dirn>
+         <label/><e164mask/>
+        </line>
+       </lines>
+      </returnedTags>
+    </ns:getPhone>
+  </soapenv:Body>
+</soapenv:Envelope>
+'@
+    $xml.SelectSingleNode("//name").innertext = $DeviceName
+    if ($description) {
+      $elem = $xml.CreateElement('description')
+      $xml.SelectSingleNode("//ns:updatePhone",$nsm).appendchild($elem).innertext = $description
+    }
+    if ($primaryPhoneName) {
+      $elem = $xml.CreateElement('primaryPhoneName')
+      $xml.SelectSingleNode("//ns:updatePhone",$nsm).appendchild($elem).innertext = $primaryPhoneName
+    }
+    if ($CSS) {
+      $elem = $xml.CreateElement('callingSearchSpaceName')
+      $xml.SelectSingleNode("//ns:updatePhone",$nsm).appendchild($elem).innertext = $CSS
+    }
+
+    $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $xmltracefile
+    $retNode = $retXml.selectSingleNode("//return", $nsm)
+    $retXml
+    <#
+    if (-not $retNode) {
+      throw "Failed to find //return element in server's response.  $($retXml.outerXML)"
+    }
+    if (-not ($retNode.innerText -match '^(true|{[a-f\d-]{36}\})$')) {
+      throw "Server returned unexpected result.  Expected 'true' or a GUID, but got '$($retNode.innerText)"
+    }
+    #>
+  }
+}
+
 function Set-UcPhone {
 <#
   .synopsis
@@ -1084,6 +1226,10 @@ function Set-UcPhone {
     ,
     [parameter(ValueFromPipelineByPropertyName=$true)][string]
     $primaryPhoneName
+    ,
+    # Device Calling Search Space
+    [parameter(ValueFromPipelineByPropertyName=$true)][string]
+    $CSS
     ,
     [string]$XmlTraceFile
   )
@@ -1112,7 +1258,11 @@ function Set-UcPhone {
       $elem = $xml.CreateElement('primaryPhoneName')
       $xml.SelectSingleNode("//ns:updatePhone",$nsm).appendchild($elem).innertext = $primaryPhoneName
     }
-    
+    if ($CSS) {
+      $elem = $xml.CreateElement('callingSearchSpaceName')
+      $xml.SelectSingleNode("//ns:updatePhone",$nsm).appendchild($elem).innertext = $CSS
+    }
+
     $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $xmltracefile
     $retNode = $retXml.selectSingleNode("//return", $nsm)
     if (-not $retNode) {
@@ -1123,7 +1273,6 @@ function Set-UcPhone {
     }
   }
 }
-
 
 function Add-UcBuddy {
 <#
@@ -1508,7 +1657,19 @@ function Get-UcLineAppearance {
   .parameter DN
   Only get line appearances for the specified DN.  SQL wildcard character '%' is allowed.  The default is '%' which
   gets line appearances for all DNs
-  
+
+  .parameter DeviceName
+  Only get line appearances for the specified device.  SQL wildcard character '%' is allowed.  The default is '%' which
+  gets line appearances for all devices
+
+  .parameter Mask
+  Only get line appearances matching the specified External Phone Number Mask.  SQL wildcard character '%' is allowed.  
+  The default is '%' which gets all line appearances.
+
+  .parameter Model
+  Only get line appearances for the specified model of device.  SQL wildcard character '%' is allowed.  
+  The default is '%' which gets line appearances for all models
+
   .parameter Limit
   Limit search results to the given number of records.
 
@@ -1517,7 +1678,10 @@ function Get-UcLineAppearance {
 #>
   Param(
     [Parameter(Mandatory=$true)][psobject]$AxlConn,
-    [string]$DN="%"
+    [string][ValidateScript({$_ -notmatch "'"})]$DN="%",
+    [string][ValidateScript({$_ -notmatch "'"})]$DeviceName="%",
+    [string][ValidateScript({$_ -notmatch "'"})]$Model="%",
+    [string][ValidateScript({$_ -notmatch "'"})]$Mask="%"
     ,
     [ValidateScript({[int]$_ -gt 0})]
     $Limit
@@ -1530,10 +1694,11 @@ function Get-UcLineAppearance {
 SELECT first ${effectivelimit}
  np.dnorpattern dn,
  rp.name routePartition,
+ dmp.numplanindex lineindex,
  dmp.display callerid,
  dmp.label LineLabel,
  dmp.e164mask mask,
- d.name device,
+ d.name devicename,
  d.description devicedescription,
  m.name model,
  e.userid
@@ -1549,8 +1714,11 @@ FROM
 WHERE
  d.pkid=dmp.fkdevice
  and np.dnorpattern like '${DN}'
+ and lower(d.name) like lower('${DeviceName}')
+ and lower(m.name) like lower('${Model}')
+ and dmp.e164mask like '${mask}'
 "@
-  foreach ($row in Get-UcSqlQuery $AxlConn $sql) {
+  foreach ($row in Get-UcSqlQuery -axl $AxlConn $sql) {
     $row.PSObject.TypeNames.Insert(0,'UcLineAppearance')
     $row
     $count ++
@@ -1560,6 +1728,122 @@ WHERE
   }
 }
 
+function Set-UcLineAppearance {
+<#
+  .synopsis
+  Configure line apparance parameters
+
+  .parameter axlconn
+  Connection object created with New-AxlConnection.
+
+  .parameter dn
+  Directory number (phone number) of the line apparance to be updated
+  
+  .parameter routepartition
+  Route partition associated with the DN to be updated
+  
+  .parameter lineindex
+  Line index (button number) of the line appearance to be updated
+  
+  .parameter devicename
+  Device name that the line appearance is associated with
+  
+  .parameter userid
+  userid to be associated with this line appearance.  Note: The user will replace
+  any other user(s) already associated with the line.  Only one user id 
+  is supported by this script, although it wouldn't be too hard to change this
+  to support a list of users if the need arises.
+#>
+  Param(
+    [Parameter(Mandatory=$true)][psobject]$AxlConn
+    ,
+    [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)][string]
+    $devicename
+    ,
+    [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)][string]
+    $dn
+    ,
+    [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)][string]
+    $routepartition
+    ,
+    [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)][int]
+    $lineindex
+    ,
+    [parameter(ValueFromPipelineByPropertyName=$true)][string]
+    $mask
+    ,
+    [parameter(ValueFromPipelineByPropertyName=$true)][string]
+    $callerid
+    ,
+    [parameter(ValueFromPipelineByPropertyName=$true)][string]
+    $linelabel
+    ,
+    [parameter(ValueFromPipelineByPropertyName=$true)][string]
+    $userid
+    ,
+    # Write XML request/response to a file for troubleshooting
+    [string]$XmlTraceFile
+  )
+  Begin {
+    $nsm = new-object system.xml.XmlNameSpaceManager (new-object system.xml.nametable)
+    $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
+  }
+  Process {
+    $xml = [xml]@'
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:updatePhone>
+      <name/>
+      <lines><line><index/><dirn><pattern/><routePartitionName/></dirn></line></lines>
+    </ns:updatePhone>
+  </soapenv:Body>
+</soapenv:Envelope>
+'@
+    $xml.SelectSingleNode("//ns:updatePhone/name",$nsm).innertext = $DeviceName
+    $lineElem = $xml.SelectSingleNode("//lines/line")
+    $lineElem.SelectSingleNode("index").innertext = $lineindex
+    $lineElem.SelectSingleNode("dirn/pattern").innertext = $dn
+    $lineElem.SelectSingleNode("dirn/routePartitionName").innertext = $routepartition
+    
+    if ($mask) {
+      $elem = $xml.CreateElement('e164Mask')
+      $lineElem.appendchild($elem).innertext = $mask
+    }
+    if ($callerid) {
+      $elem = $xml.CreateElement('display')
+      $lineElem.appendchild($elem).innertext = $callerid
+      $elem = $xml.CreateElement('displayAscii')
+      $lineElem.appendchild($elem).innertext = $callerid
+    }
+    if ($linelabel) {
+      $elem = $xml.CreateElement('label')
+      $lineElem.appendchild($elem).innertext = $linelabel
+      $elem = $xml.CreateElement('asciiLabel')
+      $lineElem.appendchild($elem).innertext = $linelabel
+    }
+    if ($userid) {
+      # <associatedEndusers><enduser><userId>jdoe</userId></enduser></associatedEndusers>
+      $elem = $xml.CreateElement('associatedEndusers')
+      $euElem = $xml.CreateElement('enduser')
+      $uiElem = $xml.CreateElement('userId')
+      $lineElem.appendchild($elem).appendchild($euElem).appendchild($uiElem).innertext = $userid
+      remove-variable euElem, uiElem
+    }
+
+    $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $xmltracefile
+    $retNode = $retXml.selectSingleNode("//return", $nsm)
+    if (-not $retNode) {
+      throw "Failed to find //return element in server's response.  $($retXml.outerXML)"
+    }
+    if (-not ($retNode.innerText -match '^(true|{[a-f\d-]{36}\})$')) {
+      throw "Server returned unexpected result.  Expected 'true' or a GUID, but got '$($retNode.innerText)"
+    }
+  }
+}
+
+function Get-UcWatcher {
 <#
   .synopsis
   Get a list of users which have the specified buddy address in their contact list
@@ -1577,7 +1861,6 @@ WHERE
   .outputs
   [string] A list of owner (userid's) who have the given buddy in their contact list
 #>
-function Get-UcWatcher {
   [CmdletBinding()]
   Param(
     [Parameter(Mandatory=$true, Position=0)]
@@ -1653,11 +1936,14 @@ function ConvertTo-SecureString {
 }
 
 
-Export-ModuleMember -Function Get-UcLicenseCapabilities, Set-UcLicenseCapabilities, New-AxlConnection, `
-  Get-UcSqlQuery, Get-UcSqlUpdate, Get-UcBuddy, Remove-UcBuddy, Add-UcBuddy, `
-  Get-UcUser, Get-UcDialPlans, Get-UcDN, Get-UcLineAppearance, Rename-UcBuddy, `
-  Get-UcWatcher, get-table, Get-StoredProc, Get-UcUserAcl, Get-UcCupUser, `
-  Set-UcCupUser, Add-UcUserAcl, Get-UcAssignedUsers, `
+Export-ModuleMember -Function Get-UcLicenseCapabilities, Set-UcLicenseCapabilities, New-AxlConnection,
+  Get-UcSqlQuery, Get-UcSqlUpdate, Get-UcBuddy, Remove-UcBuddy, Add-UcBuddy,
+  Get-UcUser,
+  Get-UcDialPlans, Get-UcDN, Get-UcLineAppearance, Rename-UcBuddy,
+  Get-UcWatcher, get-table, Get-StoredProc, Get-UcUserAcl, Get-UcCupUser,
+  Set-UcCupUser, Add-UcUserAcl, Get-UcAssignedUsers,
   Set-AddAssignedSubClusterUsersByNode, Get-UcCupNode,
-  Get-UcEm, Set-UcEm, Set-UcPhone
+  Get-UcEm, Set-UcEm, Set-UcPhone,
+  Get-UcPhone,
+  Set-UcLineAppearance
 
