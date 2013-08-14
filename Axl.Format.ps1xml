@@ -172,7 +172,7 @@ if ($_.primaryextension.pattern) {
                 <PropertyName>dn</PropertyName>
               </TableColumnItem>
               <TableColumnItem>
-                <PropertyName>device</PropertyName>
+                <PropertyName>devicename</PropertyName>
               </TableColumnItem>
               <TableColumnItem>
                 <PropertyName>model</PropertyName>
