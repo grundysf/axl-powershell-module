@@ -197,6 +197,32 @@ if ($_.primaryextension.pattern) {
         </TableRowEntries>
       </TableControl>
     </View>
+    
+    <!-- Controlled Device -->
+    <View>
+      <Name>UcControlledDevice</Name>
+      <ViewSelectedBy>
+        <TypeName>UcControlledDevice</TypeName>
+      </ViewSelectedBy>
+      <TableControl>
+        <TableHeaders>
+          <TableColumnHeader><Width>20</Width></TableColumnHeader>
+          <TableColumnHeader><Width>20</Width></TableColumnHeader>
+          <TableColumnHeader><Width>7</Width></TableColumnHeader>
+          <TableColumnHeader><Width>14</Width></TableColumnHeader>
+        </TableHeaders>
+        <TableRowEntries>
+          <TableRowEntry>
+            <TableColumnItems>
+              <TableColumnItem><PropertyName>UserID</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>DeviceName</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>Type</PropertyName></TableColumnItem>
+              <TableColumnItem><PropertyName>DefaultProfile</PropertyName></TableColumnItem>
+            </TableColumnItems>
+          </TableRowEntry>
+        </TableRowEntries>
+      </TableControl>
+    </View>
   </ViewDefinitions>
 
 </Configuration>

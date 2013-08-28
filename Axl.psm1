@@ -857,8 +857,10 @@ function Get-UcCupUser {
   
   .parameter User
   Only return CUP users matching the specified pattern.  SQL wildcard charater % is allowed.
+  
   .parameter force
-  Also show unlicenced users.  The default is to show only users who are licenced for CUP.
+  Also show unlicenced and inactive users.  The default is to show only users who are licenced for CUP and
+  those who's state is 1 (active).
 #>
   [CmdletBinding()]
   Param(
@@ -872,12 +874,15 @@ function Get-UcCupUser {
   )
   $licencefilter = "and l.enablecupc = 't'"
   if ($force) { $licencefilter = '' }
+  $statusfilter = "and e.status = 1"
+  if ($force) { $statusfilter = '' }
   $sql = @"
 select 
  e.userid,
  e.pkid,
  ex.firstname,
  ex.lastname,
+ e.status,
  l.enablecupc licensed,
  u.jid imaddress,
  -- e.tkassignmentstate,
@@ -894,6 +899,7 @@ from
 where 1=1
  ${licencefilter}
  and e.userid like '${User}'
+ ${statusfilter}
 order by userid
 "@
   foreach ($row in Get-UcSqlQuery -axl $AxlConn $sql) {
@@ -903,6 +909,7 @@ order by userid
     $o | add-member noteproperty userid $row.userid
     $o | add-member noteproperty firstname $row.firstname
     $o | add-member noteproperty lastname $row.lastname
+    $o | add-member noteproperty status ([int]($row.status))
     $o | add-member noteproperty licensed ($row.licensed -eq 't')
     $o | add-member noteproperty imaddress $row.imaddress
     # Axl does not return proper Xml null values. 
@@ -1012,6 +1019,52 @@ where
       $row.PSObject.TypeNames.Insert(0,'UcStoredProc')
       $row
     }
+  }
+}
+
+function Get-UcControlledDevices {
+<#
+  .synopsis
+  Get a list of controlled devices and device profiles associated with a specified user
+  
+  .parameter UserId
+  UserID who's controlled devices you wish to list.  Wildcard characters are not supported.
+#>
+  Param(
+    # Connection object created with New-AxlConnection.
+    [parameter(mandatory=$true)]
+    [psobject]$AxlConn
+    ,
+    [parameter(mandatory=$true)]
+    [string]$Userid
+  )
+  $sql = @"
+select first 10 
+ e.userid,
+ d.name devicename,
+ udm.defaultprofile,
+ atype.moniker type
+from
+ enduser e
+ left outer join enduserdevicemap udm on e.pkid=udm.fkenduser
+ left outer join device d on d.pkid = udm.fkdevice
+ left outer join typeuserassociation atype on atype.enum = udm.tkuserassociation
+where
+ e.userid = '${userid}'
+ and atype.moniker in ('USER_ASSOC_CTICTL_IN','USER_ASSOC_PROFILE_AVAILABLE')
+"@
+  foreach ($row in Get-UcSqlQuery -axl $AxlConn $sql) {
+    $o = new-object psobject
+    $o | add-member noteproperty UserID $row.userid
+    $o | add-member noteproperty DeviceName $row.devicename
+    $o | add-member noteproperty Type $null
+    switch ($row.type) {
+      USER_ASSOC_CTICTL_IN {$o.Type = 'Device'; break;}
+      USER_ASSOC_PROFILE_AVAILABLE {$o.Type = 'Profile'; break;}
+    }
+    $o | add-member noteproperty DefaultProfile ($row.defaultprofile -eq 't')
+    $o.psobject.typenames.insert(0,'UcControlledDevice')
+    $o
   }
 }
 
@@ -1945,5 +1998,6 @@ Export-ModuleMember -Function Get-UcLicenseCapabilities, Set-UcLicenseCapabiliti
   Set-AddAssignedSubClusterUsersByNode, Get-UcCupNode,
   Get-UcEm, Set-UcEm, Set-UcPhone,
   Get-UcPhone,
-  Set-UcLineAppearance
+  Set-UcLineAppearance,
+  Get-UcControlledDevices
 
