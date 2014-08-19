@@ -11,7 +11,7 @@ Usage examples
 {{{
 $axl = new-axlconnection cucm1.example.com admin
 $phones = "SEP9CAFCAFEF6F2","SEP001E4AF18FA1","SEP9CAFCAFEF4E8"
-$phones | % { $_; try {Remove-UcPhone $axl -name $_} catch [System.Exception] { write-warning $_.Exception.Message } }
+$phones | % { $_; try {Remove-UcPhone $axl -name $_} catch { write-warning $_.Exception.Message } }
 }}}
 
 == Delete a list of DNs and any phone the DN is associated with ==
