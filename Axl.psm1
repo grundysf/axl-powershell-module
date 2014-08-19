@@ -617,6 +617,132 @@ function Get-UcDialPlans {
 }
 
 
+# .outputs
+#  psobject[] returns an array of psobjects with a bunch of properties set
+function Get-UcLine {
+  Param (
+    [Parameter(Mandatory=$true)][psobject]$AxlConn,
+    [string]$pattern="%",
+    [string]$routePartitionName,
+    
+    # Write XML request/response to a file for troubleshooting
+    [string]$XmlTraceFile
+  )
+  $xml = [xml]@"
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+ <soapenv:Header/>
+ <soapenv:Body>
+  <ns:getLine sequence="1">
+   <pattern/>
+   <routePartitionName/>
+   <returnedTags>
+    <description/><pattern/><routePartitionName/>
+    <callForwardAll>
+      <forwardToVoiceMail/>
+      <callingSearchSpaceName/>
+      <secondaryCallingSearchSpaceName/>
+      <destination/>
+    </callForwardAll>
+   </returnedTags>
+  </ns:getLine>
+ </soapenv:Body>
+</soapenv:Envelope>
+"@
+  $textNode = $xml.CreateTextNode($pattern)
+  $null = $xml.SelectSingleNode("//pattern").prependchild($textNode)
+  $textNode = $xml.CreateTextNode($routePartitionName)
+  $null = $xml.SelectSingleNode("//routePartitionName").prependchild($textNode)
+  $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $XmlTraceFile
+  
+  $nsm = new-object system.xml.XmlNameSpaceManager -ArgumentList $retXml.NameTable
+  $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
+  $retXml.selectNodes("//ns:getLineResponse/return/line", $nsm) | % {
+    $cfwd = new-object psobject
+    $cfwd | add-member noteproperty forwardToVoiceMail $_.selectsinglenode("callForwardAll/forwardToVoiceMail").innertext
+    $cfwd | add-member noteproperty callingSearchSpaceName $_.selectsinglenode("callForwardAll/callingSearchSpaceName").innertext
+    $cfwd | add-member noteproperty secondaryCallingSearchSpaceName $_.selectsinglenode("callForwardAll/secondaryCallingSearchSpaceName").innertext
+    $cfwd | add-member noteproperty destination $_.selectsinglenode("callForwardAll/destination").innertext
+    
+    $node = new-object psobject
+    $node | add-member noteproperty pattern $_.selectsinglenode("pattern").innertext
+    $node | add-member noteproperty routePartitionName $_.selectsinglenode("routePartitionName").innertext
+    $node | add-member noteproperty description $_.selectsinglenode("description").innertext
+    $node | add-member noteproperty callForwardAll $cfwd
+    $node.PSObject.TypeNames.Insert(0,'UcLine')
+    $node
+  }
+}
+
+
+function Set-UcLine {
+<#
+  .synopsis
+  Set properties of a line (directory number)
+#>
+  Param(
+    # Connection object created with New-AxlConnection.
+    [Parameter(Mandatory=$true,Position=0)]
+    $AxlConn
+    ,
+    [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+    [string]$pattern
+    ,
+    [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
+    [string]$routePartitionName
+    ,
+    [parameter(ValueFromPipelineByPropertyName=$true)]
+    [string]$cfaDest
+    ,
+    [string]$XmlTraceFile
+  )
+  Begin {
+    $nsm = new-object system.xml.XmlNameSpaceManager (new-object system.xml.nametable)
+    $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
+  }
+  Process {
+    $xml = [xml]@'
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:updateLine>
+      <pattern/><routePartitionName/>
+    </ns:updateLine>
+  </soapenv:Body>
+</soapenv:Envelope>
+'@
+    $xml.SelectSingleNode("//ns:updateLine/pattern", $nsm).innertext = $pattern
+    $xml.SelectSingleNode("//ns:updateLine/routePartitionName", $nsm).innertext = $routePartitionName
+    
+    if ($cfaDest -ne $null) {
+      $currentSettings = get-ucline -AxlCon $AxlConn -pattern $pattern -routepartitionname $routepartitionname
+      $curCfa = $currentSettings.callForwardAll
+      $elem = $xml.CreateElement('callForwardAll')
+      $elem2 = $xml.CreateElement('forwardToVoiceMail')
+      $elem.appendchild($elem2).innertext = $curCfa.forwardToVoiceMail
+      $elem2 = $xml.CreateElement('callingSearchSpaceName')
+      $elem.appendchild($elem2).innertext = $curCfa.callingSearchSpaceName
+      $elem2 = $xml.CreateElement('secondaryCallingSearchSpaceName')
+      $elem.appendchild($elem2).innertext = $curCfa.secondaryCallingSearchSpaceName
+      $elem2 = $xml.CreateElement('destination')
+      if ($cfaDest.length -gt 0) {$elem2.innertext = $cfaDest}
+      $null = $elem.appendchild($elem2)
+      $null = $xml.SelectSingleNode("//ns:updateLine",$nsm).appendchild($elem)
+    }
+
+    $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $xmltracefile
+    $retNode = $retXml.selectSingleNode("//return", $nsm)
+    if (-not $retNode) {
+      throw "Failed to find //return element in server's response.  $($retXml.outerXML)"
+    }
+    if (-not ($retNode.innerText -match '^(true|{[a-f\d-]{36}\})$')) {
+      throw "Server returned unexpected result.  Expected 'true' or a GUID, but got '$($retNode.innerText)"
+    }
+  }
+}
+
+
 function New-AxlConnection {
 <#
   .synopsis
@@ -1221,6 +1347,7 @@ function Get-UcPhone {
       <returnedTags>
        <name/><description/><product/><model/><callingSearchSpaceName/>
        <devicePoolName/>
+       <primaryPhoneName/>
        <lines>
         <line>
          <dirn><pattern/><routePartitionName/></dirn>
@@ -1257,6 +1384,56 @@ function Get-UcPhone {
       throw "Server returned unexpected result.  Expected 'true' or a GUID, but got '$($retNode.innerText)"
     }
     #>
+  }
+}
+
+function Remove-UcPhone {
+<#
+  .synopsis
+  Delete a phone from CallManager
+
+  .parameter axlconn
+  Connection object created with New-AxlConnection.
+
+  .parameter Name
+  Name of the device (phone) to delete.  Aliases: devicename
+#>
+  Param(
+    [Parameter(Mandatory=$true,Position=0)][psobject]$AxlConn
+    ,
+    [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)][string]
+    [alias("devicename")]
+    $Name
+    ,
+    # Write XML request/response to a file for troubleshooting
+    [string]$XmlTraceFile
+  )
+  Begin {
+    $nsm = new-object system.xml.XmlNameSpaceManager (new-object system.xml.nametable)
+    $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
+  }
+  Process {
+    $xml = [xml]@'
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:removePhone>
+      <name/>
+    </ns:removePhone>
+  </soapenv:Body>
+</soapenv:Envelope>
+'@
+    $xml.SelectSingleNode("//ns:removePhone/name",$nsm).innertext = $Name
+    
+    $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $xmltracefile
+    $retNode = $retXml.selectSingleNode("//return", $nsm)
+    if (-not $retNode) {
+      throw "Failed to find //return element in server's response.  $($retXml.outerXML)"
+    }
+    if (-not ($retNode.innerText -match '^(true|{[a-f\d-]{36}\})$')) {
+      throw "Server returned unexpected result.  Expected 'true' or a GUID, but got '$($retNode.innerText)"
+    }
   }
 }
 
@@ -1544,6 +1721,7 @@ order by
     }
   }
 }
+
 function Get-UcDN {
 <#
   .synopsis
@@ -1557,7 +1735,8 @@ function Get-UcDN {
   Get DN's in this route partition. SQL wildcard character '%' is allowed.  The default is '%' which shows all DNs
 
   .parameter Description
-  DN to retrieve. SQL wildcard character '%' is allowed.  The default is '%' which shows all DNs
+  Retrieve DNs whols description matches the specified pattern. SQL wildcard character '%' is allowed.  
+  The default is '%' which shows all DNs
 
   .parameter axlconn
   Connection object created with New-AxlConnection.
@@ -1587,6 +1766,65 @@ order by np.dnorpattern,rp.name
     $row
   }
 }
+
+function Remove-UcDn {
+<#
+  .synopsis
+  Delete a DN from CallManager
+
+  .parameter axlconn
+  Connection object created with New-AxlConnection.
+
+  .parameter DN
+  DN to delete
+  
+  .parameter Partition
+  The partition that the DN belongs to
+
+#>
+  Param(
+    [Parameter(Mandatory=$true,Position=0)][psobject]$AxlConn
+    ,
+    [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)][string]
+    $DN
+    ,
+    [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)][string]
+    $Partition
+    ,
+    # Write XML request/response to a file for troubleshooting
+    [string]$XmlTraceFile
+  )
+  Begin {
+    $nsm = new-object system.xml.XmlNameSpaceManager (new-object system.xml.nametable)
+    $nsm.addnamespace("ns", "http://www.cisco.com/AXL/API/8.5")
+  }
+  Process {
+    $xml = [xml]@'
+<?xml version="1.0" encoding="utf-8"?>
+<soapenv:Envelope xmlns:soapenv="http://schemas.xmlsoap.org/soap/envelope/" xmlns:ns="http://www.cisco.com/AXL/API/8.5">
+  <soapenv:Header/>
+  <soapenv:Body>
+    <ns:removeLine>
+      <pattern/>
+      <routePartitionName/>
+    </ns:removeLine>
+  </soapenv:Body>
+</soapenv:Envelope>
+'@
+    $xml.SelectSingleNode("//ns:removeLine/pattern",$nsm).innertext = $DN
+    $xml.SelectSingleNode("//ns:removeLine/routePartitionName",$nsm).innertext = $Partition
+    
+    $retXml = Execute-SOAPRequest $AxlConn $xml -xmltracefile $xmltracefile
+    $retNode = $retXml.selectSingleNode("//return", $nsm)
+    if (-not $retNode) {
+      throw "Failed to find //return element in server's response.  $($retXml.outerXML)"
+    }
+    if (-not ($retNode.innerText -match '^(true|{[a-f\d-]{36}\})$')) {
+      throw "Server returned unexpected result.  Expected 'true' or a GUID, but got '$($retNode.innerText)"
+    }
+  }
+}
+
 
 function Get-UcUserAcl {
 <#
@@ -1992,12 +2230,15 @@ function ConvertTo-SecureString {
 Export-ModuleMember -Function Get-UcLicenseCapabilities, Set-UcLicenseCapabilities, New-AxlConnection,
   Get-UcSqlQuery, Get-UcSqlUpdate, Get-UcBuddy, Remove-UcBuddy, Add-UcBuddy,
   Get-UcUser,
-  Get-UcDialPlans, Get-UcDN, Get-UcLineAppearance, Rename-UcBuddy,
+  Get-UcDialPlans, 
+  Get-UcDN, Remove-UcDN,
+  Get-UcLineAppearance, Rename-UcBuddy,
   Get-UcWatcher, get-table, Get-StoredProc, Get-UcUserAcl, Get-UcCupUser,
   Set-UcCupUser, Add-UcUserAcl, Get-UcAssignedUsers,
   Set-AddAssignedSubClusterUsersByNode, Get-UcCupNode,
   Get-UcEm, Set-UcEm, Set-UcPhone,
-  Get-UcPhone,
+  Get-UcPhone, Remove-UcPhone,
   Set-UcLineAppearance,
-  Get-UcControlledDevices
+  Get-UcControlledDevices,
+  Get-UcLine, Set-UcLine
 
