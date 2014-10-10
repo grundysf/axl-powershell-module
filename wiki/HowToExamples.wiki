@@ -37,3 +37,14 @@ foreach ($line in $lines) {
   }
 }
 }}}
+
+== Change the route partition of some Lines (DNs) ==
+{{{
+$axl = new-axlconnection cucm1.example.com admin
+$lines = get-ucdn $axl -dn % -Partition "old-partition"
+foreach ($line in $lines) {
+  "{0} {1}" -f $line.dn, $line.description
+  try { set-ucline $axl -routep "old-partition" -newRoutePartitionName "new-partition" -pat $line.dn }
+  catch { write-warning $_.Exception.Message }
+}
+}}}
