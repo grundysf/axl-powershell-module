@@ -691,6 +691,8 @@ function Set-UcLine {
     [parameter(Mandatory=$true,ValueFromPipelineByPropertyName=$true)]
     [string]$routePartitionName
     ,
+    [string]$newRoutePartitionName
+    ,
     [parameter(ValueFromPipelineByPropertyName=$true)]
     [string]$cfaDest
     ,
@@ -728,6 +730,12 @@ function Set-UcLine {
       $elem2 = $xml.CreateElement('destination')
       if ($cfaDest.length -gt 0) {$elem2.innertext = $cfaDest}
       $null = $elem.appendchild($elem2)
+      $null = $xml.SelectSingleNode("//ns:updateLine",$nsm).appendchild($elem)
+    }
+    
+    if ($newRoutePartitionName -ne $null) {
+      $elem = $xml.CreateElement('newRoutePartitionName')
+      $elem.innertext = $newRoutePartitionName
       $null = $xml.SelectSingleNode("//ns:updateLine",$nsm).appendchild($elem)
     }
 
@@ -1484,9 +1492,10 @@ function Set-UcPhone {
       $elem = $xml.CreateElement('description')
       $xml.SelectSingleNode("//ns:updatePhone",$nsm).appendchild($elem).innertext = $description
     }
-    if ($primaryPhoneName) {
+    if ($primaryPhoneName -ne $null) {
       $elem = $xml.CreateElement('primaryPhoneName')
-      $xml.SelectSingleNode("//ns:updatePhone",$nsm).appendchild($elem).innertext = $primaryPhoneName
+      if ($primaryPhoneName.length -gt 0) { $elem.innertext = $primaryPhoneName }
+      $null = $xml.SelectSingleNode("//ns:updatePhone",$nsm).appendchild($elem)
     }
     if ($CSS) {
       $elem = $xml.CreateElement('callingSearchSpaceName')
